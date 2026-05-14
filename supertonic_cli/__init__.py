@@ -51,6 +51,26 @@ def cmd_languages(args):
         print(f"  {code} — {name}")
 
 
+def save_wav(path, samples, samplerate=24000):
+    import struct
+    import numpy as np
+    if hasattr(samples, "numpy"): samples = samples.numpy()
+    if hasattr(samples, "cpu"): samples = samples.cpu()
+    samples = np.asarray(samples)
+    if samples.dtype != np.int16:
+        samples = np.clip(samples * 32767, -32768, 32767).astype(np.int16)
+    data = samples.tobytes()
+    n = len(data)
+    with open(path, "wb") as f:
+        f.write(b"RIFF")
+        f.write(struct.pack("<I", 36 + n))
+        f.write(b"WAVE")
+        f.write(b"fmt ")
+        f.write(struct.pack("<IHHIIHH", 16, 1, 1, samplerate, samplerate * 2, 2, 16))
+        f.write(b"data")
+        f.write(struct.pack("<I", n))
+        f.write(data)
+
 def cmd_synthesize(args):
     TTS = check_deps()
     tts = TTS(auto_download=True)
@@ -58,11 +78,15 @@ def cmd_synthesize(args):
     start = time.time()
     wav, duration = tts.synthesize(args.text, voice_style=style, lang=args.lang)
     elapsed = time.time() - start
-    tts.save_audio(wav, args.output)
+    try:
+        tts.save_audio(wav, args.output)
+    except ImportError:
+        save_wav(args.output, wav)
+    dur = float(duration)
     if args.json:
-        print(json.dumps({"ok": True, "output": args.output, "duration_s": round(duration, 2), "real_time_s": round(elapsed, 2), "rtf": round(elapsed / duration, 3) if duration > 0 else 0, "voice": args.voice, "lang": args.lang}, indent=2))
+        print(json.dumps({"ok": True, "output": args.output, "duration_s": round(dur, 2), "real_time_s": round(elapsed, 2), "rtf": round(elapsed / max(dur, 0.001), 3), "voice": args.voice, "lang": args.lang}, indent=2))
     else:
-        print(f"synthesized {duration:.2f}s of audio -> {args.output} ({elapsed:.2f}s real, RTF={elapsed/max(duration,0.001):.3f})")
+        print(f"synthesized {dur:.2f}s of audio -> {args.output} ({elapsed:.2f}s real, RTF={elapsed/max(dur,0.001):.3f})")
 
 
 def cmd_info(args):
