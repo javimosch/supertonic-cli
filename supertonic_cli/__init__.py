@@ -51,7 +51,7 @@ def cmd_languages(args):
         print(f"  {code} — {name}")
 
 
-def save_wav(path, samples, samplerate=24000):
+def save_wav(path, samples, samplerate):
     import struct
     import numpy as np
     if hasattr(samples, "numpy"): samples = samples.numpy()
@@ -92,19 +92,20 @@ def play_audio(path):
 def synthesize(text, voice, lang):
     TTS = check_deps()
     tts = TTS(auto_download=True)
+    sr = tts.sample_rate if hasattr(tts, "sample_rate") else 24000
     style = tts.get_voice_style(voice_name=voice)
     start = time.time()
     wav, duration = tts.synthesize(text, voice_style=style, lang=lang)
     elapsed = time.time() - start
-    return wav, float(duration), elapsed
+    return wav, float(duration), elapsed, sr
 
 def cmd_synthesize(args):
-    wav, duration, elapsed = synthesize(args.text, args.voice, args.lang)
+    wav, duration, elapsed, sr = synthesize(args.text, args.voice, args.lang)
     try:
         from supertonic.pipeline import save_audio as sa
         sa(wav, args.output)
     except (ImportError, Exception):
-        save_wav(args.output, wav)
+        save_wav(args.output, wav, sr)
     if args.json:
         print(json.dumps({"ok": True, "output": args.output, "duration_s": round(duration, 2), "real_time_s": round(elapsed, 2), "rtf": round(elapsed / max(duration, 0.001), 3), "voice": args.voice, "lang": args.lang}, indent=2))
     else:
@@ -112,13 +113,13 @@ def cmd_synthesize(args):
 
 def cmd_speak(args):
     import tempfile, os
-    wav, duration, elapsed = synthesize(args.text, args.voice, args.lang)
+    wav, duration, elapsed, sr = synthesize(args.text, args.voice, args.lang)
     tmp = tempfile.mktemp(suffix=".wav")
     try:
         from supertonic.pipeline import save_audio as sa
         sa(wav, tmp)
     except (ImportError, Exception):
-        save_wav(tmp, wav)
+        save_wav(tmp, wav, sr)
     play_audio(tmp)
     os.unlink(tmp)
     if args.json:
