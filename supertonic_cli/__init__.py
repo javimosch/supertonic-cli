@@ -22,7 +22,7 @@ def cmd_voices(args):
     styles = tts.get_voice_styles() if hasattr(tts, "get_voice_styles") else []
     if not styles:
         styles = [tts.get_voice_style(v) for v in ["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"] if v]
-    if args.json:
+    if args.machine:
         print(json.dumps([{"name": v.name if hasattr(v, "name") else str(v)} for v in styles], indent=2))
         return
     print("Available voices:")
@@ -43,7 +43,7 @@ def cmd_languages(args):
         "ru": "Russian", "sk": "Slovak", "sl": "Slovenian", "sv": "Swedish",
         "tr": "Turkish", "uk": "Ukrainian", "vi": "Vietnamese",
     }
-    if args.json:
+    if args.machine:
         print(json.dumps(langs, indent=2))
         return
     print("Supported languages (31):")
@@ -99,21 +99,34 @@ def synthesize(text, voice, lang):
     elapsed = time.time() - start
     return wav, float(duration), elapsed, sr
 
+def resolve_text(args):
+    t = args.text or ""
+    override = getattr(args, "text_override", None) or ""
+    return override or t
+
 def cmd_synthesize(args):
-    wav, duration, elapsed, sr = synthesize(args.text, args.voice, args.lang)
+    text = resolve_text(args)
+    if not text:
+        print("error: text argument is required", file=sys.stderr)
+        sys.exit(1)
+    wav, duration, elapsed, sr = synthesize(text, args.voice, args.lang)
     try:
         from supertonic.pipeline import save_audio as sa
         sa(wav, args.output)
     except (ImportError, Exception):
         save_wav(args.output, wav, sr)
-    if args.json:
+    if args.machine:
         print(json.dumps({"ok": True, "output": args.output, "duration_s": round(duration, 2), "real_time_s": round(elapsed, 2), "rtf": round(elapsed / max(duration, 0.001), 3), "voice": args.voice, "lang": args.lang}, indent=2))
     else:
         print(f"synthesized {duration:.2f}s of audio -> {args.output} ({elapsed:.2f}s real, RTF={elapsed/max(duration,0.001):.3f})")
 
 def cmd_speak(args):
+    text = resolve_text(args)
+    if not text:
+        print("error: text argument is required", file=sys.stderr)
+        sys.exit(1)
     import tempfile, os
-    wav, duration, elapsed, sr = synthesize(args.text, args.voice, args.lang)
+    wav, duration, elapsed, sr = synthesize(text, args.voice, args.lang)
     tmp = tempfile.mktemp(suffix=".wav")
     try:
         from supertonic.pipeline import save_audio as sa
@@ -122,7 +135,7 @@ def cmd_speak(args):
         save_wav(tmp, wav, sr)
     play_audio(tmp)
     os.unlink(tmp)
-    if args.json:
+    if args.machine:
         print(json.dumps({"ok": True, "duration_s": round(duration, 2), "real_time_s": round(elapsed, 2), "rtf": round(elapsed / max(duration, 0.001), 3), "voice": args.voice, "lang": args.lang}, indent=2))
     else:
         print(f"spoken {duration:.2f}s ({elapsed:.2f}s real, RTF={elapsed/max(duration,0.001):.3f})")
@@ -139,7 +152,7 @@ def cmd_info(args):
         "runtime": "ONNX",
         "auto_download": True,
     }
-    if args.json:
+    if args.machine:
         print(json.dumps(info, indent=2))
     else:
         for k, v in info.items():
@@ -148,34 +161,36 @@ def cmd_info(args):
 
 def main():
     p = argparse.ArgumentParser(prog="supertonic-cli", description="On-device TTS from the command line")
-    p.add_argument("--json", action="store_true", help="JSON output")
+    p.add_argument("--machine", action="store_true", help="Machine-readable JSON output")
     sub = p.add_subparsers(dest="command", required=True)
 
     sp = sub.add_parser("voices", help="List available voices")
-    sp.add_argument("--json", action="store_true", dest="json", help="JSON output")
+    sp.add_argument("--machine", action="store_true", dest="machine", help="JSON output")
     sp.set_defaults(func=cmd_voices)
 
     sp = sub.add_parser("languages", help="List supported languages")
-    sp.add_argument("--json", action="store_true", dest="json", help="JSON output")
+    sp.add_argument("--machine", action="store_true", dest="machine", help="JSON output")
     sp.set_defaults(func=cmd_languages)
 
     sp = sub.add_parser("synthesize", help="Synthesize speech from text")
-    sp.add_argument("text", help="Text to synthesize")
+    sp.add_argument("text", nargs="?", default="", help="Text to synthesize (positional or --text)")
+    sp.add_argument("--text", dest="text_override", help="Text to synthesize (alternative to positional)")
     sp.add_argument("--voice", default="M1", help="Voice name (default: M1)")
     sp.add_argument("--lang", default="en", help="Language code (default: en)")
     sp.add_argument("-o", "--output", default="output.wav", help="Output WAV file path")
-    sp.add_argument("--json", action="store_true", dest="json", help="JSON output")
+    sp.add_argument("--machine", action="store_true", dest="machine", help="JSON output")
     sp.set_defaults(func=cmd_synthesize)
 
     sp = sub.add_parser("speak", help="Synthesize and play aloud immediately (auto-cleanup)")
-    sp.add_argument("text", help="Text to speak")
+    sp.add_argument("text", nargs="?", default="", help="Text to speak (positional or --text)")
+    sp.add_argument("--text", dest="text_override", help="Text to speak (alternative to positional)")
     sp.add_argument("--voice", default="M1", help="Voice name (default: M1)")
     sp.add_argument("--lang", default="en", help="Language code (default: en)")
-    sp.add_argument("--json", action="store_true", dest="json", help="JSON output")
+    sp.add_argument("--machine", action="store_true", dest="machine", help="JSON output")
     sp.set_defaults(func=cmd_speak)
 
     sp = sub.add_parser("info", help="Show engine info")
-    sp.add_argument("--json", action="store_true", dest="json", help="JSON output")
+    sp.add_argument("--machine", action="store_true", dest="machine", help="JSON output")
     sp.set_defaults(func=cmd_info)
 
     args = p.parse_args()
