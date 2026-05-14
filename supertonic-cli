@@ -1,0 +1,5 @@
+#!/usr/bin/env python3
+"""supertonic-cli wrapper for direct use without pip install."""
+import sys
+from supertonic_cli import main
+sys.exit(main())
