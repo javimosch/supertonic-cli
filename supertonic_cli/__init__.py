@@ -71,22 +71,60 @@ def save_wav(path, samples, samplerate=24000):
         f.write(struct.pack("<I", n))
         f.write(data)
 
-def cmd_synthesize(args):
+def find_player():
+    import shutil
+    for cmd in ["ffplay", "paplay", "aplay", "afplay", "pw-play"]:
+        if shutil.which(cmd):
+            return cmd
+    return None
+
+def play_audio(path):
+    player = find_player()
+    if not player:
+        print("error: no audio player found (install ffplay, paplay, aplay, or afplay)", file=sys.stderr)
+        sys.exit(1)
+    import subprocess
+    if player == "ffplay":
+        subprocess.run([player, "-nodisp", "-autoexit", path], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        subprocess.run([player, path], check=False)
+
+def synthesize(text, voice, lang):
     TTS = check_deps()
     tts = TTS(auto_download=True)
-    style = tts.get_voice_style(voice_name=args.voice)
+    style = tts.get_voice_style(voice_name=voice)
     start = time.time()
-    wav, duration = tts.synthesize(args.text, voice_style=style, lang=args.lang)
+    wav, duration = tts.synthesize(text, voice_style=style, lang=lang)
     elapsed = time.time() - start
+    return wav, float(duration), elapsed
+
+def cmd_synthesize(args):
+    wav, duration, elapsed = synthesize(args.text, args.voice, args.lang)
     try:
-        tts.save_audio(wav, args.output)
-    except ImportError:
+        from supertonic.pipeline import save_audio as sa
+        sa(wav, args.output)
+    except (ImportError, Exception):
         save_wav(args.output, wav)
-    dur = float(duration)
     if args.json:
-        print(json.dumps({"ok": True, "output": args.output, "duration_s": round(dur, 2), "real_time_s": round(elapsed, 2), "rtf": round(elapsed / max(dur, 0.001), 3), "voice": args.voice, "lang": args.lang}, indent=2))
+        print(json.dumps({"ok": True, "output": args.output, "duration_s": round(duration, 2), "real_time_s": round(elapsed, 2), "rtf": round(elapsed / max(duration, 0.001), 3), "voice": args.voice, "lang": args.lang}, indent=2))
     else:
-        print(f"synthesized {dur:.2f}s of audio -> {args.output} ({elapsed:.2f}s real, RTF={elapsed/max(dur,0.001):.3f})")
+        print(f"synthesized {duration:.2f}s of audio -> {args.output} ({elapsed:.2f}s real, RTF={elapsed/max(duration,0.001):.3f})")
+
+def cmd_speak(args):
+    import tempfile, os
+    wav, duration, elapsed = synthesize(args.text, args.voice, args.lang)
+    tmp = tempfile.mktemp(suffix=".wav")
+    try:
+        from supertonic.pipeline import save_audio as sa
+        sa(wav, tmp)
+    except (ImportError, Exception):
+        save_wav(tmp, wav)
+    play_audio(tmp)
+    os.unlink(tmp)
+    if args.json:
+        print(json.dumps({"ok": True, "duration_s": round(duration, 2), "real_time_s": round(elapsed, 2), "rtf": round(elapsed / max(duration, 0.001), 3), "voice": args.voice, "lang": args.lang}, indent=2))
+    else:
+        print(f"spoken {duration:.2f}s ({elapsed:.2f}s real, RTF={elapsed/max(duration,0.001):.3f})")
 
 
 def cmd_info(args):
@@ -127,6 +165,13 @@ def main():
     sp.add_argument("-o", "--output", default="output.wav", help="Output WAV file path")
     sp.add_argument("--json", action="store_true", dest="json", help="JSON output")
     sp.set_defaults(func=cmd_synthesize)
+
+    sp = sub.add_parser("speak", help="Synthesize and play aloud immediately (auto-cleanup)")
+    sp.add_argument("text", help="Text to speak")
+    sp.add_argument("--voice", default="M1", help="Voice name (default: M1)")
+    sp.add_argument("--lang", default="en", help="Language code (default: en)")
+    sp.add_argument("--json", action="store_true", dest="json", help="JSON output")
+    sp.set_defaults(func=cmd_speak)
 
     sp = sub.add_parser("info", help="Show engine info")
     sp.add_argument("--json", action="store_true", dest="json", help="JSON output")
